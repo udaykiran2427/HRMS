@@ -7,6 +7,7 @@ import uuid
 
 # --- Initializing the App ---
 app = Flask(__name__)
+# This allows your React app (running on a different port) to talk to this Flask API.
 CORS(app)
 
 # --- IN-MEMORY DATABASE (Mock Data) ---
@@ -49,7 +50,8 @@ def get_all_users_for_login():
 @app.route('/api/users/<user_id>', methods=['GET'])
 def get_user_by_id(user_id):
     user = db_users.get(user_id)
-    if user: return jsonify(user)
+    if user:
+        return jsonify(user)
     return jsonify({"error": "User not found"}), 404
 
 @app.route('/api/config', methods=['GET'])
@@ -66,10 +68,16 @@ def get_leaves_for_user(user_id):
 def apply_for_leave():
     data = request.json
     new_leave = {
-        "id": f"leave_{data['userId']}_{int(time.time())}", "userId": data['userId'],
-        "userName": db_users[data['userId']]['name'], "managerId": db_users[data['userId']]['managerId'],
-        "leaveType": data['leaveType'], "startDate": data['startDate'], "endDate": data['endDate'],
-        "reason": data['reason'], "status": 'pending', "appliedOn": datetime.date.today().isoformat()
+        "id": f"leave_{data['userId']}_{int(time.time())}",
+        "userId": data['userId'],
+        "userName": db_users[data['userId']]['name'],
+        "managerId": db_users[data['userId']]['managerId'],
+        "leaveType": data['leaveType'],
+        "startDate": data['startDate'],
+        "endDate": data['endDate'],
+        "reason": data['reason'],
+        "status": 'pending',
+        "appliedOn": datetime.date.today().isoformat()
     }
     db_leaves.append(new_leave)
     return jsonify(new_leave), 201
@@ -77,7 +85,8 @@ def apply_for_leave():
 @app.route('/api/leaves/<leave_id>/cancel', methods=['PUT'])
 def cancel_leave(leave_id):
     leave = next((l for l in db_leaves if l['id'] == leave_id), None)
-    if not leave: return jsonify({"error": "Leave request not found"}), 404
+    if not leave:
+        return jsonify({"error": "Leave request not found"}), 404
     leave['status'] = 'cancelled'
     return jsonify({"message": "Leave cancelled successfully", "leave": leave})
 
@@ -88,21 +97,35 @@ def get_pending_requests_for_manager(manager_id):
 
 @app.route('/api/leaves/<leave_id>/decide', methods=['PUT'])
 def decide_on_leave(leave_id):
-    data, new_status = request.json, data.get('status')
+    # --- FIX ---
+    # The original code had a NameError here.
+    # It was trying to use 'data' on the same line it was being defined.
+    # This has been split into two lines to fix it.
+    data = request.json
+    new_status = data.get('status')
+
     leave = next((l for l in db_leaves if l['id'] == leave_id), None)
-    if not leave: return jsonify({"error": "Leave request not found"}), 404
+    if not leave:
+        return jsonify({"error": "Leave request not found"}), 404
+
     leave['status'] = new_status
     if new_status == 'approved' and leave['leaveType'] != 'wfh':
         user = db_users.get(leave['userId'])
         if user:
-            days, l_type = get_day_difference(leave['startDate'], leave['endDate']), leave['leaveType']
+            days = get_day_difference(leave['startDate'], leave['endDate'])
+            l_type = leave['leaveType']
             key = 'compOff' if l_type == 'comp-off' else l_type
+            
             if key in user['leaveBalances']:
-                if user['leaveBalances'][key] >= days: user['leaveBalances'][key] -= days
+                if user['leaveBalances'][key] >= days:
+                    user['leaveBalances'][key] -= days
                 else:
                     rem_days = days - user['leaveBalances'][key]
-                    user['leaveBalances'][key], user['leaveBalances']['lop'] = 0, user['leaveBalances'].get('lop', 0) + rem_days
-            else: user['leaveBalances']['lop'] = user['leaveBalances'].get('lop', 0) + days
+                    user['leaveBalances'][key] = 0
+                    user['leaveBalances']['lop'] = user['leaveBalances'].get('lop', 0) + rem_days
+            else:
+                user['leaveBalances']['lop'] = user['leaveBalances'].get('lop', 0) + days
+                
     return jsonify({"message": f"Leave {new_status} successfully", "leave": leave})
 
 # === ADMIN ROUTES ===
@@ -124,29 +147,38 @@ def admin_add_user():
     data = request.json
     new_id = f"emp_{uuid.uuid4().hex[:6]}"
     db_users[new_id] = {
-        "id": new_id, "name": data['name'], "role": data['role'],
-        "managerId": data.get('managerId') or None, "employeeType": data['employeeType'],
+        "id": new_id,
+        "name": data['name'],
+        "role": data['role'],
+        "managerId": data.get('managerId') or None,
+        "employeeType": data['employeeType'],
         "leaveBalances": {"sick": 0, "casual": 0, "vacation": 0, "lop": 0, "compOff": 0}
     }
     return jsonify(db_users[new_id]), 201
 
 @app.route('/api/admin/users/<user_id>', methods=['PUT'])
 def admin_update_user(user_id):
-    if user_id not in db_users: return jsonify({"error": "User not found"}), 404
+    if user_id not in db_users:
+        return jsonify({"error": "User not found"}), 404
     data = request.json
-    db_users[user_id].update(data)
+    # Only update keys that are provided in the request
+    for key, value in data.items():
+        if key in db_users[user_id]:
+            db_users[user_id][key] = value
     return jsonify(db_users[user_id])
 
 @app.route('/api/admin/users/<user_id>', methods=['DELETE'])
 def admin_delete_user(user_id):
-    if user_id not in db_users: return jsonify({"error": "User not found"}), 404
+    if user_id not in db_users:
+        return jsonify({"error": "User not found"}), 404
     del db_users[user_id]
     return jsonify({"message": f"User {user_id} deleted."})
 
 @app.route('/api/admin/config', methods=['PUT'])
 def admin_update_config():
     global db_config
-    db_config = request.json
+    data = request.json
+    db_config.update(data)
     return jsonify(db_config)
 
 @app.route('/api/admin/all-leaves', methods=['GET'])
@@ -155,4 +187,8 @@ def admin_get_all_leaves():
 
 # --- Main Execution ---
 if __name__ == '__main__':
+    # --- FIX ---
+    # The original code had invisible non-breaking space characters ( )
+    # throughout the file, which would cause Python to crash with a SyntaxError.
+    # All have been replaced with regular spaces.
     app.run(debug=True, port=5000)
